@@ -13,3 +13,4 @@ obj-$(CONFIG_MHI_WWAN_MBIM) += mhi_wwan_mbim.o
 obj-$(CONFIG_QCOM_BAM_DMUX) += qcom_bam_dmux.o
 obj-$(CONFIG_RPMSG_WWAN_CTRL) += rpmsg_wwan_ctrl.o
 obj-$(CONFIG_IOSM) += iosm/
+obj-$(CONFIG_QCOM_BAM_DMUX) += bam_dmux.o
