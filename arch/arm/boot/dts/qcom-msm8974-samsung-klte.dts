@@ -812,13 +812,14 @@
 				compatible = "samsung,s6e3fa2";
 
 				pinctrl-names = "default";
-				pinctrl-0 = <&panel_te_pin &panel_rst_pin>;
+				pinctrl-0 = <&panel_te_pin &panel_rst_pin>; // for full driver
+				// pinctrl-0 = <&panel_te_pin>; // for panel-simple, without rst_pin!
 
 				iovdd-supply = <&pma8084_lvs4>;
 				vddr-supply = <&vreg_panel>;
+				// power-supply = <&vreg_panel>; // needed only for panel-simple, ignored by full driver
 
 				reset-gpios = <&pma8084_gpios 17 GPIO_ACTIVE_LOW>;
-				te-gpios = <&msmgpio 12 GPIO_ACTIVE_HIGH>;
 
 				port {
 					panel_in: endpoint {
