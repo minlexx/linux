@@ -836,11 +836,19 @@
 		};
 	};
 
+	dma-controller@fc834000 {
+		status = "okay";
+	};
+
 	remoteproc@fc880000 {
 		cx-supply = <&pma8084_s2>;
 		mss-supply = <&pma8084_s6>;
 		mx-supply = <&pma8084_s1>;
 		pll-supply = <&pma8084_l12>;
+
+		bam-dmux {
+			status = "okay";
+		};
 	};
 };
 
