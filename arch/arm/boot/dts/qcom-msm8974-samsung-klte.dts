@@ -289,6 +289,92 @@
 		};
 	};
 
+	i2c_max77804k {
+		compatible = "i2c-gpio";
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		sda-gpios = <&msmgpio 60 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		scl-gpios = <&msmgpio 61 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&i2c_max77804k_pins>;
+
+		i2c-gpio,delay-us = <2>;
+
+		max77804k@66 {
+			compatible = "maxim,max77804k";
+			reg = <0x66>;
+
+			interrupt-parent = <&msmgpio>;
+			interrupts = <102 IRQ_TYPE_EDGE_FALLING>;
+
+			pinctrl-names = "default";
+			pinctrl-0 = <&max77804k_int_pin>;
+
+			// regulators {
+			// 	esafeout@1 {
+			// 		regulator-compatible = "ESAFEOUT1";
+			// 		regulator-name = "ESAFEOUT1";
+			// 		regulator-boot-on;
+			// 	};
+
+			// 	esafeout@2 {
+			// 		regulator-compatible = "ESAFEOUT2";
+			// 		regulator-name = "ESAFEOUT2";
+			// 	};
+
+			// 	charger@0 {
+			// 		regulator-compatible = "CHARGER";
+			// 		regulator-name = "CHARGER";
+			// 		regulator-min-microamp = <60000>;
+			// 		regulator-max-microamp = <2580000>;
+			// 		regulator-boot-on;
+			// 	};
+			// };
+
+			// charger {
+			// 	compatible = "maxim,max77804k-charger";
+
+			// 	maxim,constant-microvolt = <4200000>;
+			// 	maxim,min-system-microvolt = <3600000>;
+			// 	maxim,thermal-regulation-celsius = <75>;
+			// 	maxim,battery-overcurrent-microamp = <3000000>;
+			// 	maxim,charge-input-threshold-microvolt = <4300000>;
+			// };
+
+			max77804k_extcon: muic {
+				compatible = "maxim,max77804k-muic";
+			};
+
+			// haptic {
+			// 	compatible = "maxim,max77693-haptic";
+			// 	haptic-supply = <&haptic_supply>;
+			// 	pwms = <&pwm 0 40000 0>;
+			// 	pwm-names = "haptic";
+			// };
+
+			// leds {
+			// 	compatible = "maxim,max77804k-led";
+			// 	#address-cells = <1>;
+			// 	#size-cells = <0>;
+
+			// 	pinctrl-names = "default";
+			// 	pinctrl-0 = <&flash_pin &torch_pin>;
+
+			// 	flash@0 {
+			// 		reg = <0>;
+			// 	};
+
+			// 	torch@1 {
+			// 		reg = <1>;
+			// 	};
+			// };
+		};
+	};
+
+
 	vreg_wlan: wlan-regulator {
 		compatible = "regulator-fixed";
 
@@ -503,6 +589,17 @@
 			};
 		};
 
+		i2c_max77804k_pins: i2c-max77804k-pins {
+			mux {
+				pins = "gpio60", "gpio61";
+				function = "gpio";
+
+				input-enable;
+				bias-pull-up;
+			};
+		};
+
+
 		gpioex_pin: gpioex {
 			res {
 				pins = "gpio145";
@@ -532,6 +629,17 @@
 				bias-disable;
 			};
 		};
+
+		max77804k_int_pin: max77804k-int-pin {
+			int {
+				pins = "gpio102";
+				function = "gpio";
+
+				drive-strength = <2>;
+				bias-disable;
+			};
+		};
+
 	};
 
 	sdhc_1: sdhci@f9824900 {
@@ -603,6 +711,7 @@
 		phy-select = <&tcsr 0xb000 0>;
 		/*extcon = <&smbb>, <&usb_id>;*/
 		/*vbus-supply = <&chg_otg>;*/
+		extcon = <&max77804k_extcon>, <&max77804k_extcon>;
 
 		hnp-disable;
 		srp-disable;
@@ -616,6 +725,7 @@
 				v3p3-supply = <&pma8084_l24>;
 
 				/*extcon = <&smbb>;*/
+				extcon = <&max77804k_extcon>;
 				qcom,init-seq = /bits/ 8 <0x1 0x64>;
 			};
 		};
