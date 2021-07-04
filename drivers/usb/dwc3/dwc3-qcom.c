@@ -10,6 +10,7 @@
 #include <linux/clk.h>
 #include <linux/irq.h>
 #include <linux/of_clk.h>
+#include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/extcon.h>
@@ -18,6 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/phy/phy.h>
 #include <linux/usb/of.h>
+#include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/iopoll.h>
 
@@ -716,6 +718,10 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 	struct resource		*res, *parent_res = NULL;
 	int			ret, i;
 	bool			ignore_pipe_clk;
+	/* used for platform-specific "UB3 switch" */
+	struct device_node	*usb3_en_syscon;
+	struct regmap		*usb3_en_regmap;
+	u32			usb3_en_offset, usb3_en_value;
 
 	qcom = devm_kzalloc(&pdev->dev, sizeof(*qcom), GFP_KERNEL);
 	if (!qcom)
@@ -789,6 +795,30 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 	if (IS_ERR(qcom->qscratch_base)) {
 		ret = PTR_ERR(qcom->qscratch_base);
 		goto clk_disable;
+	}
+
+	/* handle platform-specific quirk */
+	usb3_en_syscon = of_parse_phandle(pdev->dev.of_node, "usb3-en-syscon", 0);
+	if (usb3_en_syscon) {
+		usb3_en_regmap = syscon_node_to_regmap(usb3_en_syscon);
+		// offset and value are provided in dts:
+		//     usb3-en-syscon = <&tcsr 0xb000 1>;
+		ret = of_property_read_u32_index(pdev->dev.of_node, "usb3-en-syscon", 1, &usb3_en_offset);
+		if (ret < 0) {
+			dev_err(&pdev->dev, "no offset in usb3-en-syscon\n");
+			return -EINVAL;
+		}
+
+		ret = of_property_read_u32_index(pdev->dev.of_node, "usb3-en-syscon", 2, &usb3_en_value);
+		if (ret < 0) {
+			dev_err(&pdev->dev, "no value in usb3-en-syscon\n");
+			return -EINVAL;
+		}
+		dev_info(&pdev->dev, "usb3-en-syscon: writing %d to offset 0x%08X\n",
+				usb3_en_value, usb3_en_offset);
+		regmap_write(usb3_en_regmap, usb3_en_offset, usb3_en_value);
+		of_node_put(usb3_en_syscon);
+		mb();
 	}
 
 	ret = dwc3_qcom_setup_irq(pdev);
