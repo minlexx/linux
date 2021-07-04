@@ -704,30 +704,92 @@
 		};
 	};
 
-	usb@f9a55000 {
+	usb_hs_phy: phy@f92f8800 {
+		compatible = "qcom,ipq806x-usb-phy-hs";
+		reg = <0xf92f8800 0x30>;
+		#phy-cells = <0>;
+		clocks = <&gcc GCC_USB30_MOCK_UTMI_CLK>, <&xo_board>;
+		clock-names = "ref", "xo";
+	};
+
+	usb_ss_phy: phy@f92f8830 {
+		compatible = "qcom,ipq806x-usb-phy-ss";
+		reg = <0xf92f8830 0x30>;
+		#phy-cells = <0>;
+		clocks = <&gcc GCC_USB30_MASTER_CLK>, <&xo_board>;
+		clock-names = "ref", "xo";
+	};
+
+	usb3: usb@f92f8800 {
+		compatible = "qcom,dwc3";
+		reg = <0xf92f8800 0x400>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		clocks = <&gcc CONFIG_NOC_CLK_SRC>, // ??
+			<&gcc GCC_SYS_NOC_USB3_AXI_CLK>,  // iface == gcc_sys_noc_usb3_axi_clk
+			<&gcc GCC_USB30_MASTER_CLK>,      // core == gcc_usb30_master_clk
+			<&gcc GCC_USB30_SLEEP_CLK>,       // sleep == gcc_usb30_sleep_clk
+			<&gcc GCC_USB30_MOCK_UTMI_CLK>;   // utmi_clk == gcc_usb30_mock_utmi_clk
+		clock-names = "cfg_noc",
+			"iface",
+			"core",
+			"sleep",
+			"mock_utmi";
+		// downstream also uses hsphy_sleep_clk: sleep_a_clk == gcc_usb2a_phy_sleep_clk
+		//  and also ref_clk == diff_clk: RPM_SMD xo_buffer with ID 7 // ??
+		// <&gcc GCC_USB2B_PHY_SLEEP_CLK> // for "secondary" chipidea phy
+
+		assigned-clocks = <&gcc GCC_SYS_NOC_USB3_AXI_CLK>,
+					<&gcc GCC_USB30_MASTER_CLK>,
+					<&gcc GCC_USB30_MOCK_UTMI_CLK>;
+		assigned-clock-rates = <125000000>,
+					<125000000>,
+					<60000000>;
+
+		power-domains = <&gcc USB_HS_HSIC_GDSC>; // not sure, do we need it?
+		resets = <&gcc GCC_USB_30_BCR>; // not sure
+		// resets = <&gcc GCC_USB3_PHY_BCR>; // seems to work better
+		// resets = <&gcc GCC_USB2B_PHY_BCR> // for "secondary" chipidea phy // don't use this
 		status = "okay";
 
-		phys = <&usb_hs1_phy>;
-		phy-select = <&tcsr 0xb000 0>;
-		/*extcon = <&smbb>, <&usb_id>;*/
-		/*vbus-supply = <&chg_otg>;*/
-		extcon = <&max77804k_extcon>, <&max77804k_extcon>;
+		// phy-select = <&tcsr 0xb000 0>; // this was for ChipIdea USB controller
+		// we need to write 1 to 0xfd4ab000 which is in TCSR block (0xfd4a0000)
+		//  [0xfd4ab000 == 0xfd4a0000 + 0xb000]
+		usb3-en-syscon = <&tcsr 0xb000 1>;
+		// just for reference: this is in qcom-msm8974.dtsi
+		// tcsr: syscon@fd4a0000 {
+		// 	compatible = "syscon";
+		// 	reg = <0xfd4a0000 0x10000>;
+		// };
+		// downstream has this in reg=: <0xfd4ab000 0x4>
+		// and then it does: writel_relaxed(0x1, tcsr);
+		// so, it seems we need "secondary" HS phy?
 
-		hnp-disable;
-		srp-disable;
-		adp-disable;
+		// supplies maybe? ci-hdrc used them
+		hsusb_3p3-supply = <&pma8084_l24>;
+		hsusb_1p8-supply = <&pma8084_l6>;
+		ssusb_1p8-supply = <&pma8084_l6>;
 
-		ulpi {
-			phy@a {
-				status = "okay";
+		usb@f9200000 {
+			compatible = "snps,dwc3";
+			reg = <0xf9200000 0xcd00>;
 
-				v1p8-supply = <&pma8084_l6>;
-				v3p3-supply = <&pma8084_l24>;
+			interrupts = <GIC_SPI 131 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "dwc_usb3";
 
-				/*extcon = <&smbb>;*/
-				extcon = <&max77804k_extcon>;
-				qcom,init-seq = /bits/ 8 <0x1 0x64>;
-			};
+			phys = <&usb_hs_phy>, <&usb_ss_phy>;
+			phy-names = "usb2-phy", "usb3-phy";
+
+			// maximum-speed = "super-speed"; // default
+			tx-fifo-resize;
+			// snps,is-utmi-l1-suspend;
+			// snps,hird-threshold = /bits/ 8 <0x0>;
+			snps,dis_u2_susphy_quirk;
+			snps,dis_u3_susphy_quirk;
+
+			dr_mode = "peripheral"; // "otg"; // "host";
 		};
 	};
 
