@@ -18,6 +18,7 @@
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/phy/phy.h>
+#include <linux/regulator/consumer.h>
 #include <linux/usb/of.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
@@ -91,6 +92,10 @@ struct dwc3_qcom {
 	bool			pm_suspended;
 	struct icc_path		*icc_path_ddr;
 	struct icc_path		*icc_path_apps;
+
+	struct regulator	*hsusb_3p3_supply;
+	struct regulator	*hsusb_1p8_supply;
+	struct regulator	*ssusb_1p8_supply;
 };
 
 static inline void dwc3_qcom_setbits(void __iomem *base, u32 offset, u32 val)
@@ -570,6 +575,58 @@ static int dwc3_qcom_clk_init(struct dwc3_qcom *qcom, int count)
 	return 0;
 }
 
+static int dwc3_qcom_regulators_init(struct dwc3_qcom *qcom)
+{
+	struct device *dev = qcom->dev;
+	int ret = 0;
+
+	dev_info(dev, "Initializing regulators...\n");
+
+	// if the property is specified - then regulator should be valid.
+	// but the property itself is optional
+	if (of_find_property(dev->of_node, "hsusb_3p3-supply", NULL)) {
+		qcom->hsusb_3p3_supply = devm_regulator_get_optional(dev, "hsusb_3p3");
+		if (IS_ERR(qcom->hsusb_3p3_supply))
+			return PTR_ERR(qcom->hsusb_3p3_supply);
+		dev_info(dev, "  initializing hsusb_3p3\n");
+		ret = regulator_enable(qcom->hsusb_3p3_supply);
+		if (ret)
+			return ret;
+		ret = regulator_set_voltage_triplet(qcom->hsusb_3p3_supply,
+				3050000, 3300000, 3300000);
+		if (ret)
+			return ret;
+	}
+
+	if (of_find_property(dev->of_node, "hsusb_1p8-supply", NULL)) {
+		qcom->hsusb_1p8_supply = devm_regulator_get_optional(dev, "hsusb_1p8");
+		if (IS_ERR(qcom->hsusb_1p8_supply))
+			return PTR_ERR(qcom->hsusb_1p8_supply);
+		dev_info(dev, "  initializing hsusb_1p8\n");
+		ret = regulator_enable(qcom->hsusb_1p8_supply);
+		if (ret)
+			return ret;
+		ret = regulator_set_voltage(qcom->hsusb_1p8_supply, 1800000, 1800000);
+		if (ret)
+			return ret;
+	}
+
+	if (of_find_property(dev->of_node, "ssusb_1p8-supply", NULL)) {
+		qcom->ssusb_1p8_supply = devm_regulator_get_optional(dev, "ssusb_1p8");
+		if (IS_ERR(qcom->ssusb_1p8_supply))
+			return PTR_ERR(qcom->ssusb_1p8_supply);
+		dev_info(dev, "  initializing ssusb_3p3\n");
+		ret = regulator_enable(qcom->ssusb_1p8_supply);
+		if (ret)
+			return ret;
+		ret = regulator_set_voltage(qcom->ssusb_1p8_supply, 1800000, 1800000);
+		if (ret)
+			return ret;
+	}
+	dev_info(dev, "Initializing regulators done\n");
+	return 0;
+}
+
 static const struct property_entry dwc3_qcom_acpi_properties[] = {
 	PROPERTY_ENTRY_STRING("dr_mode", "host"),
 	{}
@@ -762,6 +819,11 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 	ret = dwc3_qcom_clk_init(qcom, of_clk_get_parent_count(np));
 	if (ret) {
 		dev_err(dev, "failed to get clocks\n");
+		goto reset_assert;
+	}
+
+	ret = dwc3_qcom_regulators_init(qcom);
+	if (ret) {
 		goto reset_assert;
 	}
 
