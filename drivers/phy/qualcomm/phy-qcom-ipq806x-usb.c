@@ -14,6 +14,7 @@
 /* USB QSCRATCH Hardware registers */
 #define QSCRATCH_GENERAL_CFG		(0x08)
 #define HSUSB_PHY_CTRL_REG		(0x10)
+#define PARAMETER_OVERRIDE_X_REG	(0x14)
 
 /* PHY_CTRL_REG */
 #define HSUSB_CTRL_DMSEHV_CLAMP		BIT(24)
@@ -156,14 +157,16 @@ static inline void usb_phy_write_readback(struct usb_phy *phy_dwc3,
 
 static int wait_for_latch(void __iomem *addr)
 {
-	u32 retry = 10;
+	u32 retry = 100; // was 10
 
 	while (true) {
 		if (!readl(addr))
 			break;
 
-		if (--retry == 0)
+		if (--retry == 0) {
+			printk(KERN_ERR "wait_for_latch: failed: addr = 0x%08X", (unsigned int)addr);
 			return -ETIMEDOUT;
+		}
 
 		usleep_range(10, 20);
 	}
@@ -221,13 +224,17 @@ static int usb_ss_read_phycreg(struct usb_phy *phy_dwc3,
 {
 	int ret;
 
+	dev_dbg(phy_dwc3->dev, "phy_dwc3->base = 0x%08X\n", (unsigned int)phy_dwc3->base);
+
 	writel(addr, phy_dwc3->base + CR_PROTOCOL_DATA_IN_REG);
 	writel(SS_CR_CAP_ADDR_REG,
 	       phy_dwc3->base + CR_PROTOCOL_CAP_ADDR_REG);
 
 	ret = wait_for_latch(phy_dwc3->base + CR_PROTOCOL_CAP_ADDR_REG);
-	if (ret)
+	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: failed wait_for_latch(1)\n", __func__);
 		goto err_wait;
+	}
 
 	/*
 	 * Due to hardware bug, first read of SSPHY register might be
@@ -237,8 +244,10 @@ static int usb_ss_read_phycreg(struct usb_phy *phy_dwc3,
 	writel(SS_CR_READ_REG, phy_dwc3->base + CR_PROTOCOL_READ_REG);
 
 	ret = wait_for_latch(phy_dwc3->base + CR_PROTOCOL_READ_REG);
-	if (ret)
+	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: failed wait_for_latch(2)\n", __func__);
 		goto err_wait;
+	}
 
 	/* throwaway read */
 	readl(phy_dwc3->base + CR_PROTOCOL_DATA_OUT_REG);
@@ -246,8 +255,10 @@ static int usb_ss_read_phycreg(struct usb_phy *phy_dwc3,
 	writel(SS_CR_READ_REG, phy_dwc3->base + CR_PROTOCOL_READ_REG);
 
 	ret = wait_for_latch(phy_dwc3->base + CR_PROTOCOL_READ_REG);
-	if (ret)
+	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: failed wait_for_latch(3)\n", __func__);
 		goto err_wait;
+	}
 
 	*val = readl(phy_dwc3->base + CR_PROTOCOL_DATA_OUT_REG);
 
@@ -262,14 +273,19 @@ static int qcom_ipq806x_usb_hs_phy_init(struct phy *phy)
 	u32 val;
 
 	ret = clk_prepare_enable(phy_dwc3->xo_clk);
-	if (ret)
+	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: failed to enable xo_clk", __func__);
 		return ret;
+	}
 
 	ret = clk_prepare_enable(phy_dwc3->ref_clk);
 	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: failed to enable ref_clk", __func__);
 		clk_disable_unprepare(phy_dwc3->xo_clk);
 		return ret;
 	}
+
+	dev_info(phy_dwc3->dev, "Starting hs_phy init, base = 0x%px\n", phy_dwc3->base);
 
 	/*
 	 * HSPHY Initialization: Enable UTMI clock, select 19.2MHz fsel
@@ -285,12 +301,31 @@ static int qcom_ipq806x_usb_hs_phy_init(struct phy *phy)
 	if (!phy_dwc3->xo_clk)
 		val |= HSUSB_CTRL_USE_CLKCORE;
 
+	val = 0x5220bb2; // FIXME: klte hack
+
+	dev_info(phy_dwc3->dev, "writing 0x%08X to HSUSB_PHY_CTRL_REG\n", val);
 	writel(val, phy_dwc3->base + HSUSB_PHY_CTRL_REG);
 	usleep_range(2000, 2200);
+	// should be: dwc3_msm_write_reg(mdwc->base, HS_PHY_CTRL_REG, 0x5220bb2);
+	// usleep_range(2000, 2200);
+	// actual: qcom-ipq806x-usb-phy f92f8800.phy: writing 0x01320BF2 to HSUSB_PHY_CTRL_REG
 
 	/* Disable (bypass) VBUS and ID filters */
+	/* Set XHCI_REV bit (2) to 1 - XHCI version 1.0 */
 	writel(HSUSB_GCFG_XHCI_REV, phy_dwc3->base + QSCRATCH_GENERAL_CFG);
 
+	/* dwc3_msm_qscratch_reg_init: sending hsphy_init_seq = 0x00D194E4 to offset 0x000F8814 */
+	// dwc3_msm_write_readback(mdwc->base,
+	// 				PARAMETER_OVERRIDE_X_REG, 0x03FFFFFF,
+	// 				mdwc->hsphy_init_seq & 0x03FFFFFF);
+	// #define QSCRATCH_REG_OFFSET	(0x000F8800)
+	// #define PARAMETER_OVERRIDE_X_REG (QSCRATCH_REG_OFFSET + 0x14)
+	writel(0x00D194E4, phy_dwc3->base + PARAMETER_OVERRIDE_X_REG);
+	dev_info(phy_dwc3->dev, "writing 0x00D194E4 to 0x%px\n",
+			phy_dwc3->base + PARAMETER_OVERRIDE_X_REG);
+	// ^^ qcom-ipq806x-usb-phy f92f8800.phy: writing 0x00D194E4 to 0xf0ada814
+
+	dev_info(phy_dwc3->dev, "%s: init OK", __func__);
 	return 0;
 }
 
@@ -311,11 +346,14 @@ static int qcom_ipq806x_usb_ss_phy_init(struct phy *phy)
 	u32 data;
 
 	ret = clk_prepare_enable(phy_dwc3->xo_clk);
-	if (ret)
+	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: failed to enable xo_clk", __func__);
 		return ret;
+	}
 
 	ret = clk_prepare_enable(phy_dwc3->ref_clk);
 	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: failed to enable ref_clk", __func__);
 		clk_disable_unprepare(phy_dwc3->xo_clk);
 		return ret;
 	}
@@ -347,23 +385,31 @@ static int qcom_ipq806x_usb_ss_phy_init(struct phy *phy)
 	 * LANE0.TX_ALT_BLOCK.EN_ALT_BUS to enable TX to use alt bus mode
 	 */
 	ret = usb_ss_read_phycreg(phy_dwc3, 0x102D, &data);
-	if (ret)
+	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: failed read_phycreg 0x102D\n", __func__);
 		goto err_phy_trans;
+	}
 
 	data |= (1 << 7);
 	ret = usb_ss_write_phycreg(phy_dwc3, 0x102D, data);
-	if (ret)
+	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: failed write_phycreg 0x102D\n", __func__);
 		goto err_phy_trans;
+	}
 
 	ret = usb_ss_read_phycreg(phy_dwc3, 0x1010, &data);
-	if (ret)
+	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: failed read_phycreg 0x1010\n", __func__);
 		goto err_phy_trans;
+	}
 
 	data &= ~0xff0;
 	data |= 0x20;
 	ret = usb_ss_write_phycreg(phy_dwc3, 0x1010, data);
-	if (ret)
+	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: failed write_phycreg 0x1010\n", __func__);
 		goto err_phy_trans;
+	}
 
 	/*
 	 * Fix RX Equalization setting as follows
@@ -432,6 +478,9 @@ static int qcom_ipq806x_usb_ss_phy_init(struct phy *phy)
 			       PHY_PARAM_CTRL1_MASK, data);
 
 err_phy_trans:
+	if (ret) {
+		dev_err(phy_dwc3->dev, "%s: something failed: %d", __func__, ret);
+	}
 	return ret;
 }
 
@@ -493,6 +542,8 @@ static int qcom_ipq806x_usb_phy_probe(struct platform_device *pdev)
 	const struct phy_drvdata *data;
 	struct phy_provider *phy_provider;
 
+	dev_info(&pdev->dev, "qcom_ipq806x_usb_phy_probe: start\n");
+
 	phy_dwc3 = devm_kzalloc(&pdev->dev, sizeof(*phy_dwc3), GFP_KERNEL);
 	if (!phy_dwc3)
 		return -ENOMEM;
@@ -502,8 +553,11 @@ static int qcom_ipq806x_usb_phy_probe(struct platform_device *pdev)
 	phy_dwc3->dev = &pdev->dev;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res)
+	if (!res) {
+		dev_err(phy_dwc3->dev, "failed to get IORESOURCE_MEM\n");
 		return -EINVAL;
+	}
+
 	size = resource_size(res);
 	phy_dwc3->base = devm_ioremap(phy_dwc3->dev, res->start, size);
 
@@ -551,6 +605,8 @@ static int qcom_ipq806x_usb_phy_probe(struct platform_device *pdev)
 
 	if (IS_ERR(phy_provider))
 		return PTR_ERR(phy_provider);
+
+	dev_info(phy_dwc3->dev, "phy-qcom-ipq806x probed OK, data->clk_rate = %d\n", data->clk_rate);
 
 	return 0;
 }
