@@ -7,11 +7,13 @@
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
+#include <drm/drm_vblank.h>
 
 #include <video/mipi_display.h>
 
@@ -659,6 +661,9 @@ struct s6e3fa2_ctx {
 
 	enum s6e3fa2_panel_subtype subtype;
 	const struct s6e3fa2_sequences_data *seq_data;
+
+	/* drm_device (mdss) that owns our dsi host */
+	struct drm_device *drm_dev;
 };
 
 static inline
@@ -760,6 +765,14 @@ static int s6e3fa2_set_brightness(struct backlight_device *bldev)
 	struct s6e3fa2_ctx *ctx = bl_get_data(bldev);
 	const int candela = bldev->props.brightness;
 	int r;
+
+	if (ctx->drm_dev) {
+		/* Change brightness only after vblank, to avoid being
+		 * interrupted in the process by frame update
+		 */
+		drm_wait_one_vblank(ctx->drm_dev, 0);
+		usleep_range(12000, 15000); /* HACK */
+	}
 
 	r = s6e3fa2_test_key_enable(ctx, true, TK_DEFAULT_MODE);
 	if (r < 0)
@@ -1130,6 +1143,41 @@ static int s6e3fa2_backlight_register(struct s6e3fa2_ctx *ctx)
 	return ret;
 }
 
+static void s6e3fa2_find_drm_device(struct s6e3fa2_ctx *ctx)
+{
+	struct mipi_dsi_device *dsi = ctx->dsi;
+	struct device *dsi_dev = &dsi->dev;
+	struct device *pdsi_dev = dsi_dev->parent;
+	struct device *mdss_dev;
+
+	dev_info(dsi_dev, "dsi dev name: %s\n", dev_name(dsi_dev));
+
+	if (!pdsi_dev) {
+		dev_warn(dsi_dev, "could not find parent dsi0 device!\n");
+		return;
+	}
+	dev_info(dsi_dev, "pdsi dev name: %s\n", dev_name(pdsi_dev));
+
+	/* pdsi's parent device should be qcom,mdss device
+	 * which is should be our drm_device */
+
+	mdss_dev = pdsi_dev->parent;
+	if (!mdss_dev) {
+		dev_warn(dsi_dev, "could not find mdss device!\n");
+		return;
+	}
+	dev_info(dsi_dev, "mdss dev name: %s\n", dev_name(mdss_dev));
+
+	if (dev_is_platform(mdss_dev)) {
+		struct platform_device *mdss_pdev = to_platform_device(mdss_dev);
+
+		dev_info(dsi_dev, "it is a platform device: %s\n", dev_name(mdss_dev));
+
+		ctx->drm_dev = platform_get_drvdata(mdss_pdev);
+		dev_info(dsi_dev, "found drm device!\n");
+	}
+}
+
 static int s6e3fa2_probe(struct mipi_dsi_device *dsi)
 {
 	struct device *dev = &dsi->dev;
@@ -1178,6 +1226,8 @@ static int s6e3fa2_probe(struct mipi_dsi_device *dsi)
 		drm_panel_remove(&ctx->panel);
 		return ret;
 	}
+
+	s6e3fa2_find_drm_device(ctx);
 
 	return 0;
 }
